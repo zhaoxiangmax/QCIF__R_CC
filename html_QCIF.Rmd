@@ -1,0 +1,319 @@
+---
+title: "QCIF_R_CC"
+author: "Xiang Zhao"
+date: "`r Sys.Date()`"
+output: html_document
+Objective: 
+1. Demonstrating the distribution of occurrence data of a bird species 'Scarlet Robin (Petroica multicolor) with cartopragic visualisation for the last 10 years.
+2. Demonstrating the trends of overall detection in Australia for the last 10 years.
+3. Linking essential environmental variables, ecosystem processes and threats that have impacts on the distribution of the species.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+
+library(galah)
+
+
+# this id is the unique identifier of our targeted species
+
+id <- "https://biodiversity.org.au/afd/taxa/a3e5376b-f9e6-4bdf-adae-1e7add9f5c29"
+
+# use an email that has been registed with ALA
+
+galah_config(email = "x36.zhao@hdr.qut.edu.au") #this email must have been registed with ALA
+galah_config(directory = "~input_data")
+
+# filter out the data you want
+
+my_species_data <- galah_call() |> 
+  galah_filter(lsid == id, year >= 2019) |>
+  atlas_occurrences(mint_doi = TRUE)
+
+attr(my_species_data, "doi")
+
+#Generate citation
+atlas_citation(my_species_data)
+
+my_species_data$Year <- as.numeric(substr(my_species_data$eventDate, 1,4)) # extract the year and make it as number
+
+my_species_data <- my_species_data[-is.na(my_species_data$Year)]
+
+library(ggplot2)
+
+
+Year_summary <-  ggplot(my_species_data, aes(x=Year))+
+  geom_histogram() + 
+  labs(y = "Number of observations")
+
+Year_summary
+
+```
+
+we can also download medias (sounds and pictures) uploaded along with species data
+
+```{r setup, include=FALSE}
+my_species_data_with_media <- galah_call() |> 
+  galah_filter(lsid == id, year == 2024) |>
+  atlas_media()
+
+# save media data to my computer
+
+my_species_data_with_media |>
+  collect_media()
+
+```
+
+Data visualisation
+
+```{r setup, include=FALSE}
+
+library(ggiraph)
+library(RColorBrewer)
+library(rgbif)
+library(leaflet)
+library(dplyr)
+
+my_species_data <- dplyr::rename(my_species_data, latitude = decimalLatitude, 
+    longitude = decimalLongitude)
+
+my_species_data_500 <- my_species_data[c(1:500),]
+
+SR <- leaflet::leaflet(my_species_data_500) %>%
+  addTiles() %>%  # Add default OpenStreetMap map tiles
+  addMarkers(~longitude, ~latitude, popup = my_species_data_500$eventDate)
+
+SR
+
+map <- leaflet(my_species_data_500) %>% addTiles() %>% addCircleMarkers(~longitude, 
+    ~latitude, popup = my_species_data_500$eventDate, radius = 1, fillOpacity = 0.5, clusterOptions = markerClusterOptions())
+
+map <- leaflet(my_species_data_500) %>% addTiles() %>% addCircleMarkers(~longitude, ~latitude, 
+    popup = my_species_data_500$eventDate, radius = 1, weight = 2, opacity = 0.5, fill = TRUE, 
+    fillOpacity = 0.2)
+map
+
+library(RColorBrewer)
+
+library(leaflet)
+
+groups = unique(my_species_data_500$Year)
+
+my_palette <- brewer.pal(6, "Paired")
+factpal <- colorFactor(my_palette, levels = groups, ordered = TRUE)
+
+species_circle <- leaflet(my_species_data_500) %>% addTiles() %>% addCircleMarkers(~longitude, 
+    ~latitude, popup = my_species_data_500$Year, radius = 1, weight = 2, opacity = 0.5, 
+    fill = TRUE, fillOpacity = 0.2, color = ~factpal(groups))
+species_circle
+
+map = leaflet(my_species_data_500) %>% addTiles(group = "OpenStreetMap")
+for (i in groups) {
+    data = my_species_data_500[my_species_data_500$Year == i, ]
+    map = map %>% addCircleMarkers(data = data, ~longitude, ~latitude, radius = 1, 
+        weight = 2, opacity = 0.5, fill = TRUE, fillOpacity = 0.2, color = ~factpal(groups), 
+        group = i)
+}
+map %>% addLayersControl(overlayGroups = groups, options = layersControlOptions(collapsed = FALSE))
+```
+
+```{r setup, include=FALSE}
+library(shiny)
+library(leaflet)
+library(dplyr)
+library(RColorBrewer)
+library(ggplot2)
+library(data.table)
+library(bslib)
+
+#data input
+
+data <- my_species_data_500
+
+# create the color palette
+
+groups = unique(my_species_data_500$Year)
+my_palette <- brewer.pal(length(groups), "Paired")
+factpal <- colorFactor(my_palette, domain = groups, ordered = TRUE)
+
+
+ui <- fluidPage(
+  titlePanel("Map a sample of ALA Data"),
+  fluidRow(
+    
+    column(4,
+      uiOutput("SR_output"),
+      br(),
+      downloadButton("downloadData", "csv Download"),
+      br(),
+      br(),
+      h3("About"),
+      p("This app provides an example of the visualisation of species occurrence data for Scarlet Robin from the ", a("Atlas of Living Australia.", href="https://www.ala.org.au/", target = "_blank")),
+      p("The raw data can be accessed from the following DOI and please cite as: Atlas of Living Australia (9 May 2024) Occurrence download", a("https://doi.org/10.26197/ala.603b3333-ab00-4ef6-a24f-5f5811b1f719", href="https://doi.org/10.26197/ala.603b3333-ab00-4ef6-a24f-5f5811b1f719", target = "_blank"), ". The data was imported using", a("galah",href="https://support.ala.org.au/support/solutions/articles/6000261466-ala-s-r-package-galah"), "and the site was built in", a("RStudio", href="https://www.rstudio.com/", target = "_blank"), "with", a("Shiny.", href="https://www.rstudio.com/products/shiny/", target = "_blank"))),
+    
+    column(8, # maximum of 12
+      tabsetPanel(type = "tabs",
+        tabPanel("Map", leafletOutput("mymap")),
+        tabPanel("Summary", plotOutput("summary")),
+        tabPanel("Orginal Data", dataTableOutput("table"))
+      ))
+  ),
+  fluidRow(column(12, plotOutput("age_sex")))
+)
+```
+
+```{r setup, include=FALSE}
+server <- function(input, output) {
+    output$SR_output <- renderUI({
+        selectInput(inputId = "Year_input", "Year", sort(unique(data$Year)), 
+            selected = "Year")
+    })
+    # use renderLeaflet for elements of the map that don't change, note setting
+    # default sizes
+    
+    output$mymap <- renderLeaflet({
+        leaflet(data) %>% addTiles() %>% addCircleMarkers(~longitude, ~latitude, 
+            popup = data$Year, radius = 2, weight = 5, opacity = 0.5, fill = TRUE, 
+            fillOpacity = 0.2)
+    })
+    
+    # Use leafletProxy for elements that change
+    
+    observe({
+        set <- data %>% filter(data$Year %in% input$Year_input)
+        
+        leafletProxy("mymap") %>% clearMarkers() %>% addCircleMarkers(lng = set$longitude, 
+            lat = set$latitude, popup = data$Year, radius = 1, weight = 2, 
+            opacity = 0.5, fill = TRUE, fillOpacity = 0.2, color = factpal(input$Year_input))
+    })
+    
+    # Add the table
+    
+    output$table <- renderDataTable({
+        table <- data %>% filter(data$Year %in% input$Year_input)
+    })
+    
+    # Add summary plot counting species by occurrences.
+    # swamping the chart. Note that the n value filter will often need
+    
+    output$summary <- renderPlot({
+        data %>% filter(data$Year %in% input$Year_input) %>% count(dataResourceName) %>% 
+            ggplot(aes(x = reorder(dataResourceName, n), y = n, 
+            fill = dataResourceName)) + geom_bar(stat = "identity", show.legend = FALSE) + 
+            labs(x = "Data Resource", y = "occurrences")
+    })
+    
+    # Add the download file details
+    output$downloadData <- downloadHandler(filename = function() {
+        paste("scarlet_robin", ".csv", sep = "")
+    }, content = function(file) {
+        file.copy("scarlet_robin.csv", file)
+    }, contentType = "text/csv")
+    
+    output$age_sex <- renderPlot({
+      Year_summary <-  ggplot(my_species_data, aes(x=Year))+
+        geom_histogram() + 
+        labs(y = "Number of observations")
+  }, res = 96)
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+```{r setup, include=FALSE}
+ui <- page_fillable(
+
+  layout_columns(
+     card(card_header("Card 1")),
+     layout_columns(
+       card(card_header("Card 2")),
+       card(card_header("Card 3")),
+       col_widths = c(12, 12)
+     )
+  ),
+     card(card_header("Card 4"))
+
+)
+```
+
+```{r setup, include=FALSE}
+library(shiny)
+library(bslib)
+library(ggplot2)
+
+
+# Define UI for random distribution app ----
+# Sidebar layout with input and output definitions ----
+ui <- page_sidebar(
+  title = "Scarlet Robin dashboard",
+
+  sidebar = sidebar(
+    bg = "white",
+    accordion(
+      accordion_panel(
+        "Categories",
+        varSelectInput(
+          "color_by", "Color by",
+          my_species_data[c("Year","dataResourceName")],
+          selected = "Year"
+        )
+      ),
+    )
+  ),
+
+  accordion(
+    open = c("Observations", "About"),
+    accordion_panel(
+      "Observations",
+      plotOutput("Observations")
+    ),
+    accordion_panel(
+      "Environmental Variables",
+      plotOutput("Environmental_Variables")
+    ),
+    accordion_panel(
+      "Threats",
+      plotOutput("Threats")
+    )
+  )
+)
+
+
+# Define server logic required to draw a histogram ----
+server <- function(input, output) {
+  gg_plot <- reactive({
+    ggplot(my_species_data) +
+      geom_density(aes(fill = !!input$color_by), alpha = 0.2) +
+      theme_bw(base_size = 16) +
+      theme(axis.title = element_blank())
+  })
+
+  output$Observations <- renderPlot(leafletProxy("mymap") %>% clearMarkers() %>% addCircleMarkers(lng = set$longitude, 
+            lat = set$latitude, popup = data$Year, radius = 1, weight = 2, 
+            opacity = 0.5, fill = TRUE, fillOpacity = 0.2, color = factpal(input$Year_input)))
+  output$Environmental_Variables <- renderPlot(leafletProxy("mymap") %>% clearMarkers() %>% addCircleMarkers(lng = set$longitude, 
+            lat = set$latitude, popup = data$Year, radius = 1, weight = 2, 
+            opacity = 0.5, fill = TRUE, fillOpacity = 0.2, color = factpal(input$Year_input)))
+  output$Threats <- renderPlot(leafletProxy("mymap") %>% clearMarkers() %>% addCircleMarkers(lng = set$longitude, 
+            lat = set$latitude, popup = data$Year, radius = 1, weight = 2, 
+            opacity = 0.5, fill = TRUE, fillOpacity = 0.2, color = factpal(input$Year_input)))
+}
+
+# Create Shiny app ----
+shinyApp(ui = ui, server = server)
+```
+
+```{r setup, include=FALSE}
+library(shiny)
+ui<- fluidPage(
+  "Hello, world"
+)
+
+server <- function(input, output, session){
+  
+}
+
+shinyApp(ui, server)
